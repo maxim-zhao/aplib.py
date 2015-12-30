@@ -12,11 +12,11 @@ import io
 class BitsDecompress:
     """bit machine for variable-sized auto-reloading tag decompression"""
     def __init__(self, data, tag_size):
-        self.__current_bit = 0  # The count of bits available to use in the tag
-        self.__tag = None  # The tag is a bitstream dispersed through the file and read in chunks.
-                           # This is the current chunk, shifted so the MSB is the next bit.
-        self.__tag_size = tag_size  # Number of bytes per bitstream chunk, 1 by default
-        self.__in = data  # The stream
+        self.current_bit = 0  # The count of bits available to use in the tag
+        self.tag = None  # The tag is a bitstream dispersed through the file and read in chunks.
+                         # This is the current chunk, shifted so the MSB is the next bit.
+        self.tag_size = tag_size  # Number of bytes per bitstream chunk, 1 by default
+        self.in_stream = data  # The stream
         self.out = bytearray()
         self.max_offset = 0
         self.max_match_length = 0
@@ -26,39 +26,39 @@ class BitsDecompress:
     def read_bit(self):
         """read next bit from the stream, reloads the tag if necessary"""
         
-        if self.__current_bit != 0:
+        if self.current_bit != 0:
             # Move to the next bit
-            self.__current_bit -= 1
+            self.current_bit -= 1
         else:
             # Select the MSB
-            self.__current_bit = (self.__tag_size * 8) - 1
+            self.current_bit = (self.tag_size * 8) - 1
             # Read new data
-            self.__tag = self.read_byte()
+            self.tag = self.read_byte()
             self.bytes_count -= 1
-            for i in range(self.__tag_size - 1):
-                self.__tag += self.read_byte() << (8 * (i + 1))
+            for i in range(self.tag_size - 1):
+                self.tag += self.read_byte() << (8 * (i + 1))
 
         # Then extract the bit in question
-        bit = (self.__tag >> ((self.__tag_size * 8) - 1)) & 0x01
+        bit = (self.tag >> ((self.tag_size * 8) - 1)) & 0x01
         # And shift it out of the tag
-        self.__tag <<= 1
+        self.tag <<= 1
         self.bits_count += 1
         return bit
 
     def read_byte(self):
         """read next byte from the stream"""
-        result = self.__in.read(1)[0]
+        result = self.in_stream.read(1)[0]
         self.bytes_count += 1
         return result
 
-    def read_fixednumber(self, nbbit, init=0):
+    def read_fixed_number(self, num_bits, init=0):
         """reads a fixed bit-length number"""
         result = init
-        for i in range(nbbit):
+        for i in range(num_bits):
             result = (result << 1) + self.read_bit()
         return result
 
-    def read_variablenumber(self):
+    def read_variable_number(self):
         """return a variable bit-length number x, x >= 2
         reads a bit until the next bit in the pair is not set"""
         result = 1
@@ -67,12 +67,12 @@ class BitsDecompress:
             result = (result << 1) + self.read_bit()
         return result
 
-    def read_setbits(self, max_, set_=1):
+    def read_set_bits(self, max_bits, set_value=1):
         """read bits as long as their set or a maximum is reached"""
-        # Reads consecutive set bits from the bitstream, up to max_ bits or until a zero is encountered.
+        # Reads consecutive set bits from the bitstream, up to max_bits or until a zero is encountered.
         # Returns the number of set bits read.
         result = 0
-        while result < max_ and self.read_bit() == set_:
+        while result < max_bits and self.read_bit() == set_value:
             result += 1
         return result
 
@@ -101,37 +101,37 @@ class BitsDecompress:
 class Decompress(BitsDecompress):
     def __init__(self, data):
         BitsDecompress.__init__(self, data, tag_size=1)
-        self.__pair = True    # paired sequence
-        self.__last_offset = 0
-        self.__functions = [
-            self.__literal,     # 0 = literal
-            self.__block,       # 1 = block
-            self.__shortblock,  # 2 = short block
-            self.__singlebyte]  # 3 = single byte
+        self.pair = True    # paired sequence
+        self.last_offset = 0
+        self.functions = [
+            self.literal,      # 0 = literal
+            self.block,        # 1 = block
+            self.short_block,  # 2 = short block
+            self.single_byte]  # 3 = single byte
         return
 
-    def __literal(self):
+    def literal(self):
         print("Literal: ", end="")
         self.read_literal()
-        self.__pair = True
+        self.pair = True
         return False
 
-    def __block(self):
-        b = self.read_variablenumber() - 2
-        if b == 0 and self.__pair:    # reuse the same offset
-            offset = self.__last_offset
-            length = self.read_variablenumber()    # 2-
+    def block(self):
+        b = self.read_variable_number() - 2
+        if b == 0 and self.pair:    # reuse the same offset
+            offset = self.last_offset
+            length = self.read_variable_number()    # 2-
             print("Block with reused ", end="")
         else:
-            if self.__pair:
+            if self.pair:
                 b -= 1
             offset = b * 256 + self.read_byte()
-            length = self.read_variablenumber()    # 2-
+            length = self.read_variable_number()    # 2-
             length += self.length_delta(offset)
             print("Block with encoded ", end="")
-        self.__last_offset = offset
+        self.last_offset = offset
         self.back_copy(offset, length)
-        self.__pair = False
+        self.pair = False
         return False
 
     @staticmethod
@@ -142,7 +142,7 @@ class Decompress(BitsDecompress):
             return 1
         return 0
 
-    def __shortblock(self):
+    def short_block(self):
         b = self.read_byte()
         if b <= 1:    # likely 0
             print("Short block offset %d: EOF" % b)
@@ -151,19 +151,19 @@ class Decompress(BitsDecompress):
         offset = b >> 1    # 1-127
         print("Short block ", end="")
         self.back_copy(offset, length)
-        self.__last_offset = offset
-        self.__pair = False
+        self.last_offset = offset
+        self.pair = False
         return False
 
-    def __singlebyte(self):
-        offset = self.read_fixednumber(4)  # 0-15
+    def single_byte(self):
+        offset = self.read_fixed_number(4)  # 0-15
         if offset:
             print("Single byte ", end="")
             self.back_copy(offset)
         else:
             print("Single byte zero: ", end="")
             self.read_literal(0)
-        self.__pair = True
+        self.pair = True
         return False
 
     def do(self):
@@ -173,12 +173,12 @@ class Decompress(BitsDecompress):
         self.read_literal()
         while True:
             # Read the gamma-coded (?) bitstream and then execute the relevant decoder based on what's found
-            if self.__functions[self.read_setbits(3)]():
+            if self.functions[self.read_set_bits(3)]():
                 break
         return self.out
 
 if __name__ == "__main__":
-    x = decompress(open(sys.argv[1], "rb"))
+    x = Decompress(open(sys.argv[1], "rb"))
     o = x.do()
     f = open(sys.argv[1] + ".out", "wb")
     f.write(o)
