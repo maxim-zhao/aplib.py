@@ -5,40 +5,41 @@ Jorgen Ibsen U{http://www.ibsensoftware.com}
 Original: http://code.google.com/p/kabopan/source/browse/trunk/kbp/comp/aplib.py
 """
 
-#todo working but need cleaning and maybe bugfixing
+import sys
+import io
 
-import sys,io
 
-class bits_decompress:
+class BitsDecompress:
     """bit machine for variable-sized auto-reloading tag decompression"""
-    def __init__(self, data, tagsize):
-        self.__curbit = 0  # The count of bits available to use in the tag
-        self.__tag = None  # The tag is a bitstream dispersed through the file and read in chunks. This is the current chunk, shifted so the MSB is the next bit.
-        self.__tagsize = tagsize  # Number of bytes per bitstream chunk, 1 by default
+    def __init__(self, data, tag_size):
+        self.__current_bit = 0  # The count of bits available to use in the tag
+        self.__tag = None  # The tag is a bitstream dispersed through the file and read in chunks.
+                           # This is the current chunk, shifted so the MSB is the next bit.
+        self.__tag_size = tag_size  # Number of bytes per bitstream chunk, 1 by default
         self.__in = data  # The stream
         self.out = bytearray()
         self.max_offset = 0
         self.max_match_length = 0
-        self.bits_count = 0;
-        self.bytes_count = 0;
+        self.bits_count = 0
+        self.bytes_count = 0
 
     def read_bit(self):
         """read next bit from the stream, reloads the tag if necessary"""
         
-        if self.__curbit != 0:
+        if self.__current_bit != 0:
             # Move to the next bit
-            self.__curbit -= 1
+            self.__current_bit -= 1
         else:
             # Select the MSB
-            self.__curbit = (self.__tagsize * 8) - 1
+            self.__current_bit = (self.__tag_size * 8) - 1
             # Read new data
             self.__tag = self.read_byte()
-            self.bytes_count -= 1;
-            for i in range(self.__tagsize - 1):
+            self.bytes_count -= 1
+            for i in range(self.__tag_size - 1):
                 self.__tag += self.read_byte() << (8 * (i + 1))
 
         # Then extract the bit in question
-        bit = (self.__tag  >> ((self.__tagsize * 8) - 1)) & 0x01
+        bit = (self.__tag >> ((self.__tag_size * 8) - 1)) & 0x01
         # And shift it out of the tag
         self.__tag <<= 1
         self.bits_count += 1
@@ -47,7 +48,7 @@ class bits_decompress:
     def read_byte(self):
         """read next byte from the stream"""
         result = self.__in.read(1)[0]
-        self.bytes_count += 1;
+        self.bytes_count += 1
         return result
 
     def read_fixednumber(self, nbbit, init=0):
@@ -96,16 +97,17 @@ class bits_decompress:
             self.out.append(value)
         return False
 
-class decompress(bits_decompress):
+
+class Decompress(BitsDecompress):
     def __init__(self, data):
-        bits_decompress.__init__(self, data, tagsize=1)
+        BitsDecompress.__init__(self, data, tag_size=1)
         self.__pair = True    # paired sequence
-        self.__lastoffset = 0
+        self.__last_offset = 0
         self.__functions = [
-            self.__literal,    # 0 = literal
-            self.__block,      # 1 = block
-            self.__shortblock, # 2 = short block
-            self.__singlebyte] # 3 = single byte
+            self.__literal,     # 0 = literal
+            self.__block,       # 1 = block
+            self.__shortblock,  # 2 = short block
+            self.__singlebyte]  # 3 = single byte
         return
 
     def __literal(self):
@@ -116,8 +118,8 @@ class decompress(bits_decompress):
 
     def __block(self):
         b = self.read_variablenumber() - 2
-        if b == 0 and self.__pair :    # reuse the same offset
-            offset = self.__lastoffset
+        if b == 0 and self.__pair:    # reuse the same offset
+            offset = self.__last_offset
             length = self.read_variablenumber()    # 2-
             print("Block with reused ", end="")
         else:
@@ -125,14 +127,15 @@ class decompress(bits_decompress):
                 b -= 1
             offset = b * 256 + self.read_byte()
             length = self.read_variablenumber()    # 2-
-            length += self.lengthdelta(offset)
+            length += self.length_delta(offset)
             print("Block with encoded ", end="")
-        self.__lastoffset = offset
+        self.__last_offset = offset
         self.back_copy(offset, length)
         self.__pair = False
         return False
 
-    def lengthdelta(self, offset):
+    @staticmethod
+    def length_delta(offset):
         if offset < 0x80 or 0x7D00 <= offset:
             return 2
         elif 0x500 <= offset:
@@ -148,12 +151,12 @@ class decompress(bits_decompress):
         offset = b >> 1    # 1-127
         print("Short block ", end="")
         self.back_copy(offset, length)
-        self.__lastoffset = offset
+        self.__last_offset = offset
         self.__pair = False
         return False
 
     def __singlebyte(self):
-        offset = self.read_fixednumber(4) # 0-15
+        offset = self.read_fixednumber(4)  # 0-15
         if offset:
             print("Single byte ", end="")
             self.back_copy(offset)
