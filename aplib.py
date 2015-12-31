@@ -232,7 +232,7 @@ If encoded_offset == 2 and the last block was a literal or a single byte then
 Else
     last_offset = (encoded_offset - 3) << 8 + next_byte()
     if (0 <= length <= 127) length += 2
-    else if (128 <= length <= 1280) length += 1
+    else if (1280 <= length < 32000) length += 1
     else if (length >= 32000) length += 2;
     Emit length bytes from (last_offset) bytes ago
 
