@@ -11,7 +11,7 @@ import io
 
 class BitsDecompress:
     """bit machine for variable-sized auto-reloading tag decompression"""
-    def __init__(self, data, tag_size):
+    def __init__(self, data, tag_size, verbose=True):
         self.__current_bit = 0  # The count of bits available to use in the tag
         self.__tag = None  # The tag is a bitstream dispersed through the file and read in chunks.
                            # This is the current chunk, shifted so the MSB is the next bit.
@@ -22,6 +22,7 @@ class BitsDecompress:
         self.max_match_length = 0
         self.bits_count = 0
         self.bytes_count = 0
+        self.verbose = verbose
 
     def read_bit(self):
         """read next bit from the stream, reloads the tag if necessary"""
@@ -82,7 +83,7 @@ class BitsDecompress:
             b = self.out[-offset]
             s += " %02x" % b
             self.out.append(b)
-        print(s)
+        self.print(s)
         self.max_offset = max(self.max_offset, offset)
         self.max_match_length = max(self.max_match_length, length)
         return
@@ -90,17 +91,21 @@ class BitsDecompress:
     def read_literal(self, value=None):
         if value is None:
             b = self.read_byte()
-            print("%02x" % b)
+            self.print("%02x" % b)
             self.out.append(b)
         else:
-            print("%02x" % value)
+            self.print("%02x" % value)
             self.out.append(value)
         return False
 
+    def print(self, *args, **kwargs):
+        if self.verbose:
+            print(*args, **kwargs)
+
 
 class Decompress(BitsDecompress):
-    def __init__(self, data):
-        BitsDecompress.__init__(self, data, tag_size=1)
+    def __init__(self, data, verbose=True):
+        BitsDecompress.__init__(self, data, tag_size=1, verbose=verbose)
         self.__pair = True    # paired sequence
         self.__last_offset = 0
         self.__functions = [
@@ -111,7 +116,7 @@ class Decompress(BitsDecompress):
         return
 
     def __literal(self):
-        print("Literal: ", end="")
+        self.print("Literal: ", end="")
         self.read_literal()
         self.__pair = True
         return False
@@ -121,14 +126,14 @@ class Decompress(BitsDecompress):
         if b == 0 and self.__pair:    # reuse the same offset
             offset = self.__last_offset
             length = self.read_variable_number()    # 2-
-            print("Block with reused ", end="")
+            self.print("Block with reused ", end="")
         else:
             if self.__pair:
                 b -= 1
             offset = b * 256 + self.read_byte()
             length = self.read_variable_number()    # 2-
             length += self.__length_delta(offset)
-            print("Block with encoded ", end="")
+            self.print("Block with encoded ", end="")
         self.__last_offset = offset
         self.back_copy(offset, length)
         self.__pair = False
@@ -145,11 +150,11 @@ class Decompress(BitsDecompress):
     def __short_block(self):
         b = self.read_byte()
         if b <= 1:    # likely 0
-            print("Short block offset %d: EOF" % b)
+            self.print("Short block offset %d: EOF" % b)
             return True
         length = 2 + (b & 0x01)    # 2-3
         offset = b >> 1    # 1-127
-        print("Short block ", end="")
+        self.print("Short block ", end="")
         self.back_copy(offset, length)
         self.__last_offset = offset
         self.__pair = False
@@ -158,10 +163,10 @@ class Decompress(BitsDecompress):
     def __single_byte(self):
         offset = self.read_fixed_number(4)  # 0-15
         if offset:
-            print("Single byte ", end="")
+            self.print("Single byte ", end="")
             self.back_copy(offset)
         else:
-            print("Single byte zero: ", end="")
+            self.print("Single byte zero: ", end="")
             self.read_literal(0)
         self.__pair = True
         return False
@@ -169,7 +174,7 @@ class Decompress(BitsDecompress):
     def do(self):
         """returns decompressed buffer and consumed bytes counter"""
         # First byte is a literal
-        print("Initial literal: ", end="")
+        self.print("Initial literal: ", end="")
         self.read_literal()
         while True:
             # Read the gamma-coded (?) bitstream and then execute the relevant decoder based on what's found
